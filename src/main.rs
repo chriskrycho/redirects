@@ -15,8 +15,13 @@ fn main() -> CliResult {
     print_redirects(&redirects, &cli.output_dir)
 }
 
-/// Given a directory full of HTML files
+/// Given a directory full of HTML files, create HTML redirects for them.
 #[derive(StructOpt)]
+#[structopt(raw(
+    setting = "structopt::clap::AppSettings::ColoredHelp",
+    setting = "structopt::clap::AppSettings::ColorAlways",
+    setting = "structopt::clap::AppSettings::ArgRequiredElseHelp"
+))]
 struct Cli {
     /// The directory containing HTML files to create redirects for
     input_dir: PathBuf,
