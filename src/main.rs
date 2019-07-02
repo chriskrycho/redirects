@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use structopt::clap::arg_enum;
+
 use structopt::StructOpt;
 
 type CliResult = Result<(), String>;
@@ -12,7 +14,18 @@ fn main() -> CliResult {
     check_output_dir(&cli.output_dir)?;
 
     let redirects = build_redirects(&cli.input_dir, &cli.new_base_url);
-    print_redirects(&redirects, &cli.output_dir)
+
+    match cli.style {
+        Style::File => print_redirect_files(&redirects, &cli.output_dir),
+        Style::Netlify => print_netlify_redirects(&redirects, &cli.output_dir),
+    }
+}
+
+arg_enum! {
+    enum Style {
+        File,
+        Netlify,
+    }
 }
 
 /// Given a directory full of HTML files, create HTML redirects for them.
@@ -26,7 +39,7 @@ struct Cli {
     /// The directory containing HTML files to create redirects for
     input_dir: PathBuf,
 
-    /// The target directory for the redirect files.
+    /// The target directory for the redirects.
     output_dir: PathBuf,
 
     /// The base URL to use in generating the redirects.
@@ -34,6 +47,10 @@ struct Cli {
     /// - Protocol is required; if it is not included, it will be ignored
     /// - Trailing slash is forbidden
     new_base_url: String,
+
+    /// Output style to use: file or Netlify rule set
+    #[structopt(raw(possible_values = "&Style::variants()"), case_insensitive = true)]
+    style: Style,
 }
 
 fn check_input_dir(input_dir: &Path) -> CliResult {
@@ -79,31 +96,44 @@ fn build_redirects(input_dir: &Path, new_base_url: &str) -> Redirects {
             path.strip_prefix(input_dir)
                 .expect("paths contain their own parents")
         })
-        .fold(HashMap::new(), |mut map, file_name| {
+        .fold(HashMap::new(), |mut map, file_path| {
             map.insert(
-                file_name.to_path_buf(),
+                file_path.to_path_buf(),
                 format!(
-                    r#"<meta http-equiv="refresh" content="0; url={base}/{path}">
-<link rel="canonical" href="{base}/{path}" />"#,
+                    "{base}/{path}",
                     base = new_base_url,
-                    path = file_name.display()
+                    path = file_path.display()
                 ),
             );
             map
         })
 }
 
-fn print_redirects(redirects: &Redirects, output_dir: &Path) -> CliResult {
-    for (file_name, redirect) in redirects {
-        let path = output_dir.join(&file_name);
+fn print_redirect_files(redirect: &Redirects, output_dir: &Path) -> CliResult {
+    for (file_path, redirect) in redirect {
+        let path = output_dir.join(&file_path);
         let parent = path.parent().ok_or(format!("path must include parent"))?;
 
         if !parent.exists() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{:?}", e))?;
         }
-
-        std::fs::write(&path, redirect).map_err(|e| format!("{:?}", e))?;
+        let content = format!(
+            r#"<meta http-equiv="refresh" content="0; url={url}">\n<link rel="canonical" href="{url}" />"#,
+            url = redirect
+        );
+        std::fs::write(&path, content).map_err(|e| format!("{:?}", e))?;
     }
 
     Ok(())
+}
+
+fn print_netlify_redirects(redirects: &Redirects, output_dir: &Path) -> CliResult {
+    let content = redirects
+        .iter()
+        .fold(String::new(), |string, (file_path, redirect)| {
+            string + "\n" + &format!("/{} {} 301", file_path.display(), redirect)
+        });
+
+    let path = output_dir.join("_redirects");
+    std::fs::write(&path, &content).map_err(|e| format!("{:?}", e))
 }
